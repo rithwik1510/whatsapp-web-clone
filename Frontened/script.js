@@ -177,6 +177,25 @@ sendBtn.addEventListener('click', async ()=>{
 
 messageInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') sendBtn.click(); });
 messageInput.addEventListener('input', toggleSendMic); toggleSendMic();
+
+// Add typing indicators
+let typingTimer = null;
+messageInput.addEventListener('input', () => {
+  if (socket && activeChat) {
+    // Emit typing start
+    socket.emit('typing_start', { wa_id: activeChat.wa_id });
+    
+    // Clear existing timer
+    if (typingTimer) clearTimeout(typingTimer);
+    
+    // Set timer to stop typing indicator after 2 seconds
+    typingTimer = setTimeout(() => {
+      if (socket && activeChat) {
+        socket.emit('typing_stop', { wa_id: activeChat.wa_id });
+      }
+    }, 2000);
+  }
+});
   // back button for mobile
   const backBtn = document.getElementById('backBtn');
   backBtn?.addEventListener('click', ()=>{ document.body.classList.remove('show-chat'); });
@@ -236,38 +255,93 @@ function toggleScrollBtn(){
 messagePane.addEventListener('scroll', toggleScrollBtn);
 scrollDownBtn.addEventListener('click', ()=>{ messagePane.scrollTop = messagePane.scrollHeight; toggleScrollBtn(); });
 
-  // SSE live updates
-  let es = null;
-  try{
-    try {
-      es = new EventSource((API_BASE||'') + '/events');
-    } catch (err) {
-      es = null;
-    }
-  if (es) es.onmessage = (ev)=>{
-    if (!ev?.data) return;
-    try{
-      const data = JSON.parse(ev.data);
-      if (data.type === 'new_message'){
-        const msg = data.message;
-        if (activeChat && msg.wa_id === activeChat.wa_id){
-          renderMessages([...(window.__lastMsgs||[]), msg]);
+  // Real-time: Socket.IO → SSE → Polling
+  let socket = null;
+  let boundRealtime = false;
+  
+  // Try Socket.IO first (best real-time experience)
+  try {
+    if (window.io) {
+      const socketUrl = API_BASE || window.location.origin;
+      socket = window.io(socketUrl, { 
+        transports: ['websocket', 'polling'],
+        timeout: 20000
+      });
+      
+      socket.on('connect', () => {
+        console.log('✅ Socket.IO connected');
+        boundRealtime = true;
+      });
+      
+      socket.on('disconnect', () => {
+        console.log('❌ Socket.IO disconnected');
+        boundRealtime = false;
+      });
+      
+      socket.on('new_message', (msg) => {
+        console.log('📨 New message via Socket.IO:', msg);
+        if (activeChat && msg.wa_id === activeChat.wa_id) {
+          renderMessages([...(window.__lastMsgs || []), msg]);
         }
-        loadChats();
-      }
-    }catch(_){/*ignore*/}
-  };
-}catch(e){ console.warn('SSE not available', e) }
+        loadChats(); // Update chat list
+      });
+      
+      // Optional: Add typing indicators
+      socket.on('typing_start', (data) => {
+        if (activeChat && data.wa_id === activeChat.wa_id) {
+          chatPresence.textContent = 'typing...';
+        }
+      });
+      
+      socket.on('typing_stop', (data) => {
+        if (activeChat && data.wa_id === activeChat.wa_id) {
+          chatPresence.textContent = 'online';
+        }
+      });
+      
+      socket.on('connect_error', (error) => {
+        console.warn('Socket.IO connection error:', error);
+        boundRealtime = false;
+      });
+    }
+  } catch (e) {
+    console.warn('Socket.IO not available:', e);
+  }
 
-  if (!es) {
-    // Fallback: poll active chat every 3s when open
-    setInterval(async ()=>{
+  // Fallback to SSE if Socket.IO fails
+  if (!boundRealtime) {
+    let es = null;
+    try {
+      es = new EventSource((API_BASE || '') + '/events');
+      es.onmessage = (ev) => {
+        if (!ev?.data) return;
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.type === 'new_message') {
+            console.log('📨 New message via SSE:', data.message);
+            const msg = data.message;
+            if (activeChat && msg.wa_id === activeChat.wa_id) {
+              renderMessages([...(window.__lastMsgs || []), msg]);
+            }
+            loadChats();
+          }
+        } catch (_) {}
+      };
+      boundRealtime = true;
+      console.log('✅ SSE connected as fallback');
+    } catch (_) {}
+  }
+
+  // Final fallback: polling
+  if (!boundRealtime) {
+    console.log('⚠️ Using polling fallback');
+    setInterval(async () => {
       if (!activeChat) return;
-      try{
+      try {
         const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(activeChat.wa_id)}`);
         const msgs = await res.json();
         renderMessages(msgs);
-      }catch(_){ }
+      } catch (_) {}
     }, 3000);
   }
 

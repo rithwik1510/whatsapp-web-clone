@@ -15,6 +15,23 @@ app = Flask(__name__, static_folder='Frontened', static_url_path='/Frontened')
 CORS(app)  # Allow cross-origin requests for frontend
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
+# Socket.IO event handlers
+@socketio.on('connect')
+def handle_connect():
+    print(f"✅ Client connected: {request.sid}")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print(f"❌ Client disconnected: {request.sid}")
+
+@socketio.on('typing_start')
+def handle_typing_start(data):
+    socketio.emit('typing_start', data, broadcast=True, include_self=False)
+
+@socketio.on('typing_stop')
+def handle_typing_stop(data):
+    socketio.emit('typing_stop', data, broadcast=True, include_self=False)
+
 # Connect to MongoDB
 try:
     client = MongoClient(MONGO_URI)
