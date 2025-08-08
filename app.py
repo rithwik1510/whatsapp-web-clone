@@ -16,9 +16,18 @@ CORS(app)  # Allow cross-origin requests for frontend
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # Connect to MongoDB
-client = MongoClient(MONGO_URI)
-db = client['whatsapp']
-collection = db['processed_messages']
+try:
+    client = MongoClient(MONGO_URI)
+    # Test the connection
+    client.admin.command('ping')
+    print("✅ MongoDB connected successfully")
+except Exception as e:
+    print(f"❌ MongoDB connection failed: {e}")
+    # Create a fallback for demo purposes
+    client = None
+
+db = client['whatsapp'] if client else None
+collection = db['processed_messages'] if db else None
 
 PAYLOADS_DIR = 'payloads'
 
@@ -58,6 +67,10 @@ def get_contacts_from_json_files():
     return result
 
 def bootstrap_db_from_payloads_if_empty():
+    if not collection:
+        print("❌ MongoDB not available, skipping bootstrap")
+        return
+        
     try:
         if collection.estimated_document_count() > 0:
             return
@@ -99,27 +112,35 @@ def bootstrap_db_from_payloads_if_empty():
                         msg['name'] = profile_name
                         msg['status'] = msg.get('status') or 'sent'
                         msg['wamid'] = msg_id
-                        existing = collection.find_one({ 'wamid': msg_id })
+
+                        # Check if message already exists
+                        existing = collection.find_one({"wamid": msg_id})
                         if not existing:
                             collection.insert_one(msg)
+                            print(f"Inserted message {msg_id}")
 
                     # Update statuses
                     for status in value.get('statuses', []) or []:
-                        meta_id = status.get('id') or (status.get('meta') or {}).get('meta_msg_id') or status.get('meta_msg_id')
-                        new_status = status.get('status')
+                        meta_id = status.get("id") or status.get("meta", {}).get("meta_msg_id")
+                        new_status = status.get("status")
                         if meta_id and new_status:
-                            collection.update_one(
-                                { 'wamid': meta_id },
-                                { '$set': { 'status': new_status } }
+                            result = collection.update_one(
+                                {"wamid": meta_id},
+                                {"$set": {"status": new_status}}
                             )
-        print('Bootstrap from payloads complete')
+                            if result.matched_count:
+                                print(f"Updated message {meta_id} to status {new_status}")
     except Exception as e:
-        print(f"Bootstrap failed: {e}")
+        print(f"❌ Bootstrap error: {e}")
 
 
 @app.route('/')
 def serve_index():
-    return send_from_directory(app.static_folder, 'index.html')
+    return send_from_directory('Frontened', 'index.html')
+
+@app.route('/test')
+def test():
+    return jsonify({"status": "ok", "message": "Flask app is working", "mongo_connected": collection is not None})
 
 def get_messages_from_payloads(wa_id: str):
     messages = []
@@ -164,12 +185,29 @@ def get_messages_from_payloads(wa_id: str):
 @app.route('/chats', methods=['GET'])
 def get_chats():
     print("=== /chats endpoint called ===")
-    # Ensure DB has messages from payloads on first run
-    bootstrap_db_from_payloads_if_empty()
-    
-    # Since MongoDB Atlas doesn't allow aggregation, we'll use a simple approach
-    # Get all documents and process them in Python
     try:
+        # Ensure DB has messages from payloads on first run
+        bootstrap_db_from_payloads_if_empty()
+        
+        # Check if MongoDB is available
+        if not collection:
+            print("❌ MongoDB not available, using fallback data")
+            # Return fallback data from JSON files
+            json_contacts = get_contacts_from_json_files()
+            fallback_chats = []
+            for contact in json_contacts:
+                fallback_chats.append({
+                    "wa_id": contact['wa_id'],
+                    "name": contact['name'],
+                    "last_message": "Demo message",
+                    "last_timestamp": "1754400000",
+                    "unread_count": 0
+                })
+            print(f"Returning {len(fallback_chats)} fallback chats")
+            return jsonify(fallback_chats)
+        
+        # Since MongoDB Atlas doesn't allow aggregation, we'll use a simple approach
+        # Get all documents and process them in Python
         all_docs = list(collection.find())
         print(f"Total documents in MongoDB: {len(all_docs)}")
         
@@ -219,7 +257,7 @@ def get_chats():
         print(f"MongoDB chats found: {len(mongo_chats)}")
         
     except Exception as e:
-        print(f"MongoDB error: {e}")
+        print(f"❌ MongoDB error: {e}")
         mongo_chats = []
 
     # Convert mongo_chats to a dictionary for easier lookup
@@ -254,7 +292,7 @@ def get_chats():
             })
 
     print(f"Total chats to return: {len(all_chats)}")
-    return Response(json_util.dumps(all_chats), mimetype='application/json')
+    return jsonify(all_chats)
 
 
 @app.route('/chats/<wa_id>', methods=['GET'])
