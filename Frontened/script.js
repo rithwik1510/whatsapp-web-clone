@@ -1,9 +1,9 @@
 function init(){
-  const API_BASE = (window.location.port === '5000')
-    ? ''
-    : ((window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
-        ? 'http://127.0.0.1:5000'
-        : `http://${window.location.hostname}:5000`);
+  // On Render/production, everything is served from the same origin
+  // On localhost, API runs on port 5000
+  const API_BASE = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
+    ? 'http://127.0.0.1:5000'
+    : '';
   const chatListEl = document.getElementById('chatList');
   const messagePane = document.getElementById('messagePane');
   const searchInput = document.getElementById('searchInput');
