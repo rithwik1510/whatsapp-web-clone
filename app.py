@@ -2,6 +2,7 @@ import os
 import json
 import time
 import uuid
+from collections import defaultdict
 from flask import Flask, jsonify, request, send_from_directory, Response, stream_with_context
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -46,6 +47,9 @@ except Exception as e:
 
 db = client['whatsapp'] if client else None
 collection = db['processed_messages'] if db else None
+
+# In-memory fallback store when MongoDB is not available
+IN_MEMORY_MESSAGES = defaultdict(list)  # wa_id -> list[message]
 
 PAYLOADS_DIR = 'payloads'
 
@@ -200,6 +204,24 @@ def get_messages_from_payloads(wa_id: str):
     return messages
 
 
+# Helper to merge and dedupe messages by id/wamid
+
+def merge_dedupe_messages(payload_msgs, memory_msgs):
+    deduped = []
+    seen = set()
+    for msg in (payload_msgs + memory_msgs):
+        key = msg.get('id') or msg.get('wamid') or (msg.get('text',{}).get('body'), msg.get('timestamp'))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(msg)
+    # sort by timestamp if present
+    try:
+        deduped.sort(key=lambda m: float(m.get('timestamp', 0)))
+    except Exception:
+        pass
+    return deduped
+
 @app.route('/chats', methods=['GET'])
 def get_chats():
     print("=== /chats endpoint called ===")
@@ -207,100 +229,72 @@ def get_chats():
         # Ensure DB has messages from payloads on first run
         bootstrap_db_from_payloads_if_empty()
         
-        # Check if MongoDB is available
         if not collection:
-            print("❌ MongoDB not available, using fallback data")
-            # Return fallback data from JSON files
+            print("❌ MongoDB not available, building chats from payload+memory")
             json_contacts = get_contacts_from_json_files()
-            fallback_chats = []
+            all_chats = []
             for contact in json_contacts:
-                fallback_chats.append({
-                    "wa_id": contact['wa_id'],
+                wa_id = contact['wa_id']
+                payload_msgs = get_messages_from_payloads(wa_id)
+                memory_msgs = IN_MEMORY_MESSAGES.get(wa_id, [])
+                merged = merge_dedupe_messages(payload_msgs, memory_msgs)
+                last_msg = merged[-1] if merged else None
+                all_chats.append({
+                    "wa_id": wa_id,
                     "name": contact['name'],
-                    "last_message": "Demo message",
-                    "last_timestamp": "1754400000",
+                    "last_message": (last_msg or {}).get('text',{}).get('body',''),
+                    "last_timestamp": (last_msg or {}).get('timestamp',''),
                     "unread_count": 0
                 })
-            print(f"Returning {len(fallback_chats)} fallback chats")
-            return jsonify(fallback_chats)
+            print(f"Total chats to return (fallback): {len(all_chats)}")
+            return jsonify(all_chats)
         
         # Since MongoDB Atlas doesn't allow aggregation, we'll use a simple approach
-        # Get all documents and process them in Python
         all_docs = list(collection.find())
         print(f"Total documents in MongoDB: {len(all_docs)}")
-        
-        mongo_chats = []
         chat_groups = {}
-        
         for doc in all_docs:
             wa_id = doc.get('wa_id')
             if not wa_id:
                 continue
-                
-            if wa_id not in chat_groups:
-                chat_groups[wa_id] = {
-                    '_id': wa_id,
-                    'name': doc.get('name', 'Unknown'),
-                    'last_message': doc.get('text', {}).get('body', ''),
-                    'last_timestamp': doc.get('timestamp', 0),
-                    'unread_count': 0
-                }
-            else:
-                # Update with more recent message if available
-                current_timestamp = doc.get('timestamp', 0)
-                stored_timestamp = chat_groups[wa_id].get('last_timestamp', 0)
-                
-                # Ensure both are numbers for comparison
-                if isinstance(current_timestamp, str):
-                    try:
-                        current_timestamp = float(current_timestamp)
-                    except (ValueError, TypeError):
-                        current_timestamp = 0
-                        
-                if isinstance(stored_timestamp, str):
-                    try:
-                        stored_timestamp = float(stored_timestamp)
-                    except (ValueError, TypeError):
-                        stored_timestamp = 0
-                
-                if current_timestamp > stored_timestamp:
-                    chat_groups[wa_id]['last_message'] = doc.get('text', {}).get('body', '')
-                    chat_groups[wa_id]['last_timestamp'] = current_timestamp
-                
-                # Count unread messages
-                if doc.get('status') != 'read':
-                    chat_groups[wa_id]['unread_count'] += 1
-        
+            group = chat_groups.setdefault(wa_id, {
+                '_id': wa_id,
+                'name': doc.get('name', 'Unknown'),
+                'last_message': '',
+                'last_timestamp': 0,
+                'unread_count': 0
+            })
+            ts = doc.get('timestamp', 0)
+            try:
+                ts = float(ts)
+            except Exception:
+                ts = 0
+            if ts >= group['last_timestamp']:
+                group['last_message'] = (doc.get('text') or {}).get('body','')
+                group['last_timestamp'] = ts
+            if doc.get('status') != 'read':
+                group['unread_count'] += 1
         mongo_chats = list(chat_groups.values())
-        print(f"MongoDB chats found: {len(mongo_chats)}")
-        
     except Exception as e:
         print(f"❌ MongoDB error: {e}")
         mongo_chats = []
 
-    # Convert mongo_chats to a dictionary for easier lookup
-    chat_dict = {chat['_id']: chat for chat in mongo_chats}
-
-    # Get contacts from JSON files
+    # Merge with contacts to ensure every contact appears
+    chat_dict = {c['_id']: c for c in mongo_chats}
     json_contacts = get_contacts_from_json_files()
-    print(f"JSON contacts found: {len(json_contacts)}")
-
-    # Merge contacts from JSON files with chat data from MongoDB
     all_chats = []
     for contact in json_contacts:
         wa_id = contact['wa_id']
         if wa_id in chat_dict:
-            # Contact has messages in MongoDB, use that data
-            chat = chat_dict[wa_id]
+            c = chat_dict[wa_id]
             all_chats.append({
-                "wa_id": chat['_id'],
-                "name": chat.get('name', 'Unknown'),
-                "last_message": chat.get('last_message', ''),
-                "last_timestamp": chat.get('last_timestamp', ''),
-                "unread_count": chat.get('unread_count', 0)
+                "wa_id": c['_id'],
+                "name": c.get('name','Unknown'),
+                "last_message": c.get('last_message',''),
+                "last_timestamp": c.get('last_timestamp',''),
+                "unread_count": c.get('unread_count',0)
             })
         else:
-            # Contact from JSON but no messages in MongoDB, create a default entry
             all_chats.append({
                 "wa_id": wa_id,
                 "name": contact['name'],
@@ -308,16 +302,16 @@ def get_chats():
                 "last_timestamp": '',
                 "unread_count": 0
             })
-
     print(f"Total chats to return: {len(all_chats)}")
     return jsonify(all_chats)
-
 
 @app.route('/chats/<wa_id>', methods=['GET'])
 def get_messages(wa_id):
     if not collection:
-        print(f"⚠️ MongoDB not available, using payload fallback for {wa_id}")
-        messages = get_messages_from_payloads(wa_id)
+        print(f"⚠️ MongoDB not available, using payload+memory for {wa_id}")
+        payload_msgs = get_messages_from_payloads(wa_id)
+        memory_msgs = IN_MEMORY_MESSAGES.get(wa_id, [])
+        messages = merge_dedupe_messages(payload_msgs, memory_msgs)
         return Response(json_util.dumps(messages), mimetype='application/json')
     
     try:
@@ -333,15 +327,15 @@ def get_messages(wa_id):
         messages = get_messages_from_payloads(wa_id)
         return Response(json_util.dumps(messages), mimetype='application/json')
 
-
 @app.route('/messages', methods=['POST'])
 def send_message():
     data = request.json
     if not data.get("wa_id") or not data.get("text"):
         return jsonify({"error": "wa_id and text are required"}), 400
 
-    # Generate unique ID with microseconds to avoid duplicates
-    unique_id = f"local_{datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4())[:8]}"
+    # Use client-provided id if present to avoid duplicates
+    provided_id = data.get('client_id')
+    unique_id = provided_id or f"local_{datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4())[:8]}"
     
     new_message = {
         "id": unique_id,
@@ -351,42 +345,37 @@ def send_message():
         "text": {"body": data["text"]},
         "type": "text",
         "status": "sent",
-        "wamid": unique_id  # Add wamid for consistency
+        "wamid": unique_id
     }
 
-    # Try to save to MongoDB if available
+    new_message_copy = new_message
+
+    # Try to save to MongoDB; else save to memory
     if collection:
         try:
-            result = collection.insert_one(new_message)
+            collection.insert_one(new_message)
             print(f"✅ Message saved to MongoDB: {new_message['id']}")
-            try:
-                # Ensure no ObjectId leaks into SSE payload
-                new_message_copy = json.loads(json_util.dumps(new_message))
-            except Exception:
-                new_message_copy = new_message
         except Exception as e:
             print(f"❌ DB insert failed: {e}")
-            new_message_copy = new_message
     else:
-        print("⚠️ MongoDB not available, message only in memory")
-        new_message_copy = new_message
+        messages = IN_MEMORY_MESSAGES[new_message['wa_id']]
+        # dedupe in memory
+        if not any((m.get('id') == unique_id or m.get('wamid') == unique_id) for m in messages):
+            messages.append(new_message)
+        print(f"💾 Stored in memory: {new_message['id']}")
 
-    # Push new message event to queue for SSE (works even if DB down)
+    # Realtime notifications
     try:
         event_json = json.dumps({"type": "new_message", "message": new_message_copy})
     except TypeError:
-        # Fallback using bson util
         event_json = json_util.dumps({"type": "new_message", "message": new_message_copy})
     event_queue.put(event_json)
-    
-    # Also emit via Socket.IO (correct API)
     try:
         socketio.emit('new_message', new_message_copy)
-        print(f"✅ Emitted message via Socket.IO: {new_message_copy.get('id', 'unknown')}")
     except Exception as e:
         print(f"❌ Socket.IO emit failed: {e}")
 
-    return jsonify({"message": "Message stored successfully"}), 201
+    return jsonify({"message": "Message stored successfully", "id": unique_id}), 201
 
 @app.route('/events')
 def events():

@@ -166,9 +166,12 @@ function toggleSendMic(){
 sendBtn.addEventListener('click', async ()=>{
   const text = messageInput.value.trim();
   if (!text || !activeChat) return;
-  const payload = { wa_id: activeChat.wa_id, text, name: 'You' };
+  const clientId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`;
+  const payload = { wa_id: activeChat.wa_id, text, name: 'You', client_id: clientId };
   // optimistic UI
-  renderMessages([...(window.__lastMsgs||[]), { wa_id: activeChat.wa_id, name: 'You', text: { body: text }, timestamp: (Date.now()/1000), status: 'sent' }]);
+  const optimistic = { wa_id: activeChat.wa_id, name: 'You', text: { body: text }, timestamp: (Date.now()/1000), status: 'sent', id: clientId, wamid: clientId };
+  renderMessages([...(window.__lastMsgs||[]), optimistic]);
+  window.__lastLocalId = clientId;
   try{
     await fetch(`${API_BASE}/messages`,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
   }catch(e){console.warn('send failed',e)}
@@ -281,6 +284,7 @@ scrollDownBtn.addEventListener('click', ()=>{ messagePane.scrollTop = messagePan
       
       socket.on('new_message', (msg) => {
         console.log('📨 New message via Socket.IO:', msg);
+        if (!shouldAcceptIncoming(msg)) return;
         if (activeChat && msg.wa_id === activeChat.wa_id) {
           renderMessages([...(window.__lastMsgs || []), msg]);
         }
@@ -321,6 +325,7 @@ scrollDownBtn.addEventListener('click', ()=>{ messagePane.scrollTop = messagePan
           if (data.type === 'new_message') {
             console.log('📨 New message via SSE:', data.message);
             const msg = data.message;
+            if (!shouldAcceptIncoming(msg)) return;
             if (activeChat && msg.wa_id === activeChat.wa_id) {
               renderMessages([...(window.__lastMsgs || []), msg]);
             }
@@ -353,6 +358,17 @@ if (document.readyState === 'loading'){
   document.addEventListener('DOMContentLoaded', init);
 } else {
   init();
+}
+
+// In realtime handlers, drop duplicates from our own optimistic render
+function shouldAcceptIncoming(msg){
+  if (!msg) return false;
+  if (window.__lastLocalId && (msg.id === window.__lastLocalId || msg.wamid === window.__lastLocalId)){
+    // Already rendered optimistically
+    window.__lastLocalId = null;
+    return false;
+  }
+  return true;
 }
 
 
