@@ -1,8 +1,7 @@
 function init(){
-  // On Render/production, everything is served from the same origin
-  // On localhost, API runs on port 5000
-  const API_BASE = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
-    ? 'http://127.0.0.1:5000'
+  const isLocal = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost');
+  const API_BASE = isLocal
+    ? (window.location.port === '5000' ? '' : 'http://127.0.0.1:5000')
     : '';
   const chatListEl = document.getElementById('chatList');
   const messagePane = document.getElementById('messagePane');
@@ -257,7 +256,7 @@ scrollDownBtn.addEventListener('click', ()=>{ messagePane.scrollTop = messagePan
         const res = await fetch(`${API_BASE}/chats/${encodeURIComponent(activeChat.wa_id)}`);
         const msgs = await res.json();
         renderMessages(msgs);
-      }catch(_){}
+      }catch(_){ }
     }, 3000);
   }
 
