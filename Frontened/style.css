@@ -75,6 +75,8 @@ body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetic
 @keyframes slide-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
 .composer{display:flex;align-items:center;gap:8px;padding:10px;background:var(--panel);border-top:1px solid var(--border)}
+.composer .icon{width:32px;height:32px}
+.composer .icon::before{background-size:18px}
 .composer__input{flex:1;background:#172229;border:none;outline:none;border-radius:8px;color:var(--text);padding:10px}
 
 .scroll-down{position:absolute;right:28px;bottom:84px;width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,.06);background:rgba(32,44,51,.9);cursor:pointer}
