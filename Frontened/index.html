@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Web</title>
+  <link rel="stylesheet" href="/Frontened/style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <header class="sidebar__header">
+        <img class="avatar" id="meAvatar" src="/Frontened/assets/default-avatar.svg" alt="Me" />
+        <div class="actions">
+          <button class="icon" id="statusBtn" title="Status"></button>
+          <button class="icon" id="newChatBtn" title="New chat"></button>
+          <button class="icon" id="menuBtn" title="Menu"></button>
+        </div>
+      </header>
+      <div class="sidebar__search">
+        <div class="search">
+          <i></i>
+          <input id="searchInput" type="text" placeholder="Search or start new chat" />
+        </div>
+      </div>
+      <nav class="sidebar__tabs">
+        <button class="tab tab--active">All</button>
+        <button class="tab">Unread</button>
+        <button class="tab">Favorites</button>
+        <button class="tab">Groups</button>
+      </nav>
+      <ul id="chatList" class="chat-list"></ul>
+    </aside>
+
+    <main class="chat">
+      <header class="chat__header">
+        <button class="icon back" id="backBtn" title="Back"></button>
+        <img class="avatar" id="chatAvatar" src="/Frontened/assets/default-avatar.svg" alt="Avatar" />
+        <div class="chat__meta">
+          <div id="chatTitle" class="chat__title">Select a chat</div>
+          <div id="chatPresence" class="chat__presence">Offline</div>
+        </div>
+        <div class="actions">
+          <button class="icon search" title="Search"></button>
+          <button class="icon phone" title="Call"></button>
+          <button class="icon menu" id="chatMenuBtn" title="Menu"></button>
+        </div>
+      </header>
+      <section id="messagePane" class="chat__messages"></section>
+      <footer class="composer">
+        <button class="icon emoji" title="Emoji"></button>
+        <button class="icon attach" title="Attach"></button>
+        <input id="messageInput" class="composer__input" type="text" placeholder="Type a message" />
+        <button class="icon mic" id="micBtn" title="Voice"></button>
+        <button class="icon send" id="sendBtn" title="Send"></button>
+      </footer>
+      <button id="scrollDownBtn" class="scroll-down hidden" title="Scroll to latest"></button>
+    </main>
+  </div>
+
+  <div id="popover" class="popover hidden"></div>
+  
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
+  <script src="/Frontened/script.js"></script>
+</body>
+</html>
+
+ 

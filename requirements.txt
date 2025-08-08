@@ -1,0 +1,7 @@
+Flask
+flask_cors
+gunicorn
+pymongo
+flask-socketio
+simple-websocket
+eventlet
