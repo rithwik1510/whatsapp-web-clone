@@ -314,6 +314,11 @@ def get_chats():
 
 @app.route('/chats/<wa_id>', methods=['GET'])
 def get_messages(wa_id):
+    if not collection:
+        print(f"⚠️ MongoDB not available, using payload fallback for {wa_id}")
+        messages = get_messages_from_payloads(wa_id)
+        return Response(json_util.dumps(messages), mimetype='application/json')
+    
     try:
         messages = list(collection.find({"wa_id": wa_id}).sort("timestamp", 1))
         for m in messages:
@@ -323,7 +328,7 @@ def get_messages(wa_id):
             messages = get_messages_from_payloads(wa_id)
         return Response(json_util.dumps(messages), mimetype='application/json')
     except Exception as e:
-        print(f"DB error on get_messages: {e}")
+        print(f"❌ DB error on get_messages: {e}")
         messages = get_messages_from_payloads(wa_id)
         return Response(json_util.dumps(messages), mimetype='application/json')
 
@@ -344,15 +349,21 @@ def send_message():
         "status": "sent"
     }
 
-    try:
-        result = collection.insert_one(new_message)
+    # Try to save to MongoDB if available
+    if collection:
         try:
-            # Ensure no ObjectId leaks into SSE payload
-            new_message_copy = json.loads(json_util.dumps(new_message))
-        except Exception:
+            result = collection.insert_one(new_message)
+            print(f"✅ Message saved to MongoDB: {new_message['id']}")
+            try:
+                # Ensure no ObjectId leaks into SSE payload
+                new_message_copy = json.loads(json_util.dumps(new_message))
+            except Exception:
+                new_message_copy = new_message
+        except Exception as e:
+            print(f"❌ DB insert failed: {e}")
             new_message_copy = new_message
-    except Exception as e:
-        print(f"DB insert failed: {e}")
+    else:
+        print("⚠️ MongoDB not available, message only in memory")
         new_message_copy = new_message
 
     # Push new message event to queue for SSE (works even if DB down)
@@ -362,8 +373,13 @@ def send_message():
         # Fallback using bson util
         event_json = json_util.dumps({"type": "new_message", "message": new_message_copy})
     event_queue.put(event_json)
-    # Also emit via websocket
-    socketio.emit('new_message', new_message_copy, broadcast=True)
+    
+    # Also emit via Socket.IO (correct API)
+    try:
+        socketio.emit('new_message', new_message_copy)
+        print(f"✅ Emitted message via Socket.IO: {new_message_copy.get('id', 'unknown')}")
+    except Exception as e:
+        print(f"❌ Socket.IO emit failed: {e}")
 
     return jsonify({"message": "Message stored successfully"}), 201
 
