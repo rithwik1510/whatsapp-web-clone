@@ -149,7 +149,8 @@ async function loadChats(){
     chats = await res.json();
     console.log('Loaded chats:', chats);
     renderChatList(chats);
-    if (chats.length) openChat(chats[0]);
+    // Only auto-open on first load
+    if (!activeChat && chats.length) openChat(chats[0]);
   }catch(e){
     console.error('Failed to load /chats', e);
     chatListEl.innerHTML = '<li class="chat-item"><div style="color:#f66">Failed to load chats: ' + e.message + '</div></li>';
