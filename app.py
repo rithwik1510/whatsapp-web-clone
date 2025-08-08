@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import uuid
 from flask import Flask, jsonify, request, send_from_directory, Response, stream_with_context
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -26,11 +27,11 @@ def handle_disconnect():
 
 @socketio.on('typing_start')
 def handle_typing_start(data):
-    socketio.emit('typing_start', data, broadcast=True, include_self=False)
+    socketio.emit('typing_start', data, include_self=False)
 
 @socketio.on('typing_stop')
 def handle_typing_stop(data):
-    socketio.emit('typing_stop', data, broadcast=True, include_self=False)
+    socketio.emit('typing_stop', data, include_self=False)
 
 # Connect to MongoDB
 try:
@@ -339,14 +340,18 @@ def send_message():
     if not data.get("wa_id") or not data.get("text"):
         return jsonify({"error": "wa_id and text are required"}), 400
 
+    # Generate unique ID with microseconds to avoid duplicates
+    unique_id = f"local_{datetime.now().strftime('%Y%m%d%H%M%S')}_{str(uuid.uuid4())[:8]}"
+    
     new_message = {
-        "id": "local_" + datetime.now().strftime("%Y%m%d%H%M%S"),
+        "id": unique_id,
         "wa_id": data["wa_id"],
         "name": data.get("name", "You"),
         "timestamp": datetime.now().timestamp(),
         "text": {"body": data["text"]},
         "type": "text",
-        "status": "sent"
+        "status": "sent",
+        "wamid": unique_id  # Add wamid for consistency
     }
 
     # Try to save to MongoDB if available
