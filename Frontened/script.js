@@ -1,8 +1,12 @@
 function init(){
+  // API_BASE logic: use same origin for production, localhost:5000 for local dev
   const isLocal = (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost');
-  const API_BASE = isLocal
-    ? (window.location.port === '5000' ? '' : 'http://127.0.0.1:5000')
+  const API_BASE = isLocal && window.location.port !== '5000' 
+    ? 'http://127.0.0.1:5000' 
     : '';
+  
+  console.log('API_BASE:', API_BASE, 'Current origin:', window.location.origin);
+  
   const chatListEl = document.getElementById('chatList');
   const messagePane = document.getElementById('messagePane');
   const searchInput = document.getElementById('searchInput');
@@ -135,13 +139,20 @@ function renderMessages(messages){
 
 async function loadChats(){
   try{
-    const res = await fetch(`${API_BASE}/chats`);
+    const url = `${API_BASE}/chats`;
+    console.log('Fetching chats from:', url);
+    const res = await fetch(url);
+    console.log('Response status:', res.status);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
     chats = await res.json();
+    console.log('Loaded chats:', chats);
     renderChatList(chats);
     if (chats.length) openChat(chats[0]);
   }catch(e){
-    chatListEl.innerHTML = '<li class="chat-item"><div style="color:#f66">Failed to load chats</div></li>';
     console.error('Failed to load /chats', e);
+    chatListEl.innerHTML = '<li class="chat-item"><div style="color:#f66">Failed to load chats: ' + e.message + '</div></li>';
   }
 }
 
