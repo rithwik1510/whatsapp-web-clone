@@ -2,6 +2,7 @@ import os
 import json
 import time
 import uuid
+import eventlet
 from collections import defaultdict
 from flask import Flask, jsonify, request, send_from_directory, Response, stream_with_context
 from flask_socketio import SocketIO
@@ -55,6 +56,49 @@ PAYLOADS_DIR = 'payloads'
 
 # In-memory queue for SSE events
 event_queue = queue.Queue()
+
+# ---- Status update helpers ----
+
+def emit_status_update(wa_id: str, message_id: str, status: str):
+    # Update DB or in-memory store
+    updated_doc = None
+    if collection:
+        try:
+            collection.update_one({"$or": [{"id": message_id}, {"wamid": message_id}]}, {"$set": {"status": status}})
+            updated_doc = collection.find_one({"$or": [{"id": message_id}, {"wamid": message_id}]})
+        except Exception as e:
+            print(f"❌ DB status update failed: {e}")
+    else:
+        lst = IN_MEMORY_MESSAGES.get(wa_id, [])
+        for m in lst:
+            if m.get('id') == message_id or m.get('wamid') == message_id:
+                m['status'] = status
+                updated_doc = m
+                break
+    payload = {"wa_id": wa_id, "id": message_id, "status": status}
+    # Emit via websocket
+    try:
+        socketio.emit('status_update', payload)
+    except Exception as e:
+        print(f"❌ Socket.IO status emit failed: {e}")
+    # Emit via SSE
+    try:
+        ev = json.dumps({"type": "status_update", "update": payload})
+    except TypeError:
+        ev = json_util.dumps({"type": "status_update", "update": payload})
+    event_queue.put(ev)
+
+
+def simulate_delivery_and_read(wa_id: str, message_id: str):
+    try:
+        eventlet.sleep(1.0)
+        emit_status_update(wa_id, message_id, 'delivered')
+        eventlet.sleep(1.0)
+        emit_status_update(wa_id, message_id, 'read')
+    except Exception as e:
+        print(f"❌ Simulation error: {e}")
+
+# ---- End helpers ----
 
 def get_contacts_from_json_files():
     contacts = {}
@@ -374,6 +418,12 @@ def send_message():
         socketio.emit('new_message', new_message_copy)
     except Exception as e:
         print(f"❌ Socket.IO emit failed: {e}")
+
+    # simulate delivered/read updates shortly after send
+    try:
+        eventlet.spawn_n(simulate_delivery_and_read, new_message_copy['wa_id'], new_message_copy['id'])
+    except Exception as e:
+        print(f"❌ Could not schedule status simulation: {e}")
 
     return jsonify({"message": "Message stored successfully", "id": unique_id}), 201
 

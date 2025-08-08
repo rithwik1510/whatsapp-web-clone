@@ -304,6 +304,17 @@ scrollDownBtn.addEventListener('click', ()=>{ messagePane.scrollTop = messagePan
         }
       });
       
+      // Status updates
+      socket.on('status_update', (u) => {
+        if (!u || !activeChat || u.wa_id !== activeChat.wa_id) return;
+        // Refresh messages for current chat to pick up status change
+        fetch(`${API_BASE}/chats/${encodeURIComponent(activeChat.wa_id)}`)
+          .then(r=>r.json())
+          .then(msgs=>renderMessages(msgs))
+          .catch(()=>{});
+        loadChats();
+      });
+      
       socket.on('connect_error', (error) => {
         console.warn('Socket.IO connection error:', error);
         boundRealtime = false;
